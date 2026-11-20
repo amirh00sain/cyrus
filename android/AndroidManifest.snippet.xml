@@ -1,0 +1,14 @@
+<!-- Inserted inside <application> by scripts/patch-apk.sh -->
+<activity
+    android:name="com.opera.vpn.VpnPermissionActivity"
+    android:exported="false"
+    android:excludeFromRecents="true"
+    android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+<service
+    android:name="com.opera.vpn.OperaVpnService"
+    android:exported="false"
+    android:permission="android.permission.BIND_VPN_SERVICE">
+    <intent-filter>
+        <action android:name="android.net.VpnService" />
+    </intent-filter>
+</service>

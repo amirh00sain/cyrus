@@ -1,0 +1,19 @@
+Website = "https://github.com/amirh00sain"
+
+[Details]
+  Icon    = "icon.png"
+  Name    = "OperaVPN"
+  ID      = "com.opera.vpn"
+  Version = "1.0.0"
+  Build   = 1
+
+[android]
+  # BIND_VPN_SERVICE is not a normal permission: it is declared on the
+  # <service> element, which scripts/patch-apk.sh adds to the APK together
+  # with the VpnService classes from android/java.
+  Permissions = [
+    "INTERNET",
+    "ACCESS_NETWORK_STATE",
+    "ACCESS_WIFI_STATE",
+    "CHANGE_NETWORK_STATE"
+  ]

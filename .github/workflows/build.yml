@@ -1,0 +1,320 @@
+name: build
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  APP_NAME: OperaVPN
+  APP_ID: com.opera.vpn
+
+jobs:
+  # -------------------------------------------------------------------------
+  # Android: universal APK containing arm, arm64, x86 and x86_64 libraries.
+  # -------------------------------------------------------------------------
+  android:
+    name: Universal APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Java (javac/keytool for the VPN service)
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Resolve Go modules
+        run: go mod tidy
+
+      - name: Fetch Iranian IP ranges (embedded for TUN mode)
+        run: bash scripts/fetch-ir.sh
+
+      - name: Install fyne-cross
+        run: go install github.com/fyne-io/fyne-cross@v1.6.3
+
+      - name: Build universal APK (all ABIs)
+        run: |
+          $(go env GOPATH)/bin/fyne-cross android . \
+            -app-id ${{ env.APP_ID }} \
+            -name ${{ env.APP_NAME }} \
+            -arch=multiple \
+            -icon=icon.png
+
+      - name: Add the VPN service (Java) to the APK and re-sign it
+        run: |
+          APK=$(find fyne-cross/dist -name '*.apk' | head -n1)
+          bash scripts/patch-apk.sh "$APK" "${{ env.APP_NAME }}-universal.apk"
+          ls -lh "${{ env.APP_NAME }}-universal.apk"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: android-universal-apk
+          path: ${{ env.APP_NAME }}-universal.apk
+
+
+  # -------------------------------------------------------------------------
+  # Linux: build a portable AppImage with fyne-cross + appimagetool.
+  # -------------------------------------------------------------------------
+  linux:
+    name: Linux AppImage
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Resolve Go modules
+        run: go mod tidy
+
+      - name: Fetch Iranian IP ranges (embedded for TUN mode)
+        run: bash scripts/fetch-ir.sh
+
+      - name: Install fyne-cross
+        run: go install github.com/fyne-io/fyne-cross@v1.6.3
+
+      - name: Build Linux binary (amd64) via fyne-cross
+        run: |
+          $(go env GOPATH)/bin/fyne-cross linux . \
+            -arch=amd64 \
+            -name "${{ env.APP_NAME }}" \
+            -app-id ${{ env.APP_ID }} \
+            -icon=icon.png
+
+      - name: Download appimagetool
+        run: |
+          curl -fsSL -o appimagetool \
+            https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool
+
+      - name: Assemble AppImage
+        run: |
+          set -euo pipefail
+
+          APPDIR=AppDir
+          mkdir -p \
+            "$APPDIR/usr/bin" \
+            "$APPDIR/usr/share/applications" \
+            "$APPDIR/usr/share/icons/hicolor/512x512/apps"
+
+          # fyne-cross produces a tar.xz in fyne-cross/dist/linux-amd64/.
+          TAR=$(find fyne-cross/dist/linux-amd64 -name '*.tar.xz' | head -n1)
+          if [ -z "$TAR" ]; then
+            echo "ERROR: No fyne-cross tarball found" >&2
+            find fyne-cross -maxdepth 4 >&2
+            exit 1
+          fi
+          echo "Using tarball: $TAR"
+          tar -tf "$TAR" | head -20
+
+          mkdir -p extracted
+          tar -xf "$TAR" -C extracted
+          BIN=$(find extracted/usr/local/bin -type f -perm -u+x | head -n1)
+          if [ -z "$BIN" ]; then
+            echo "ERROR: No executable found inside the tarball" >&2
+            find extracted >&2
+            exit 1
+          fi
+          echo "Using binary: $BIN"
+
+          cp "$BIN" "$APPDIR/usr/bin/${{ env.APP_NAME }}"
+          chmod +x "$APPDIR/usr/bin/${{ env.APP_NAME }}"
+          cp "${{ env.APP_NAME }}.desktop" "$APPDIR/usr/share/applications/"
+          # appimagetool requires the .desktop file at the AppDir root.
+          cp "${{ env.APP_NAME }}.desktop" "$APPDIR/${{ env.APP_NAME }}.desktop"
+          cp icon.png "$APPDIR/usr/share/icons/hicolor/512x512/apps/${{ env.APP_NAME }}.png"
+          cp icon.png "$APPDIR/${{ env.APP_NAME }}.png"
+
+          # Write AppRun using printf to avoid heredoc escaping issues.
+          printf '%s\n' \
+            '#!/bin/sh' \
+            'HERE="$(dirname "$(readlink -f "$0")")"' \
+            'export LD_LIBRARY_PATH="$HERE/usr/lib:${LD_LIBRARY_PATH:-}"' \
+            'exec "$HERE/usr/bin/'"${{ env.APP_NAME }}"'" "$@"' \
+            > "$APPDIR/AppRun"
+          chmod +x "$APPDIR/AppRun"
+
+          ./appimagetool --appimage-extract-and-run \
+            "$APPDIR" "${{ env.APP_NAME }}-x86_64.AppImage"
+
+          ls -lh "${{ env.APP_NAME }}-x86_64.AppImage"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: linux-appimage-x86_64
+          path: ${{ env.APP_NAME }}-x86_64.AppImage
+
+
+  # -------------------------------------------------------------------------
+  # Windows: x64 and x86 GUI executables.
+  # -------------------------------------------------------------------------
+  windows:
+    name: Windows x64 + x86
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      - name: Resolve Go modules
+        run: go mod tidy
+
+      - name: Fetch Iranian IP ranges (embedded for TUN mode)
+        run: bash scripts/fetch-ir.sh
+
+      - name: Install fyne-cross
+        run: go install github.com/fyne-io/fyne-cross@v1.6.3
+
+      - name: Fetch Wintun (embedded into the exe for TUN mode)
+        run: bash scripts/fetch-wintun.sh
+
+      - name: Build Windows binaries (amd64 + 386)
+        run: |
+          set -euo pipefail
+          FYNE_CROSS="$(go env GOPATH)/bin/fyne-cross"
+
+          # Build each architecture in its own invocation. Keep every fyne-cross
+          # option BEFORE the final package path (.) so the CLI parses the flags.
+          for arch in amd64 386; do
+            echo "========== Building Windows $arch =========="
+            "$FYNE_CROSS" windows \
+              -arch="$arch" \
+              -app-id "${{ env.APP_ID }}" \
+              -name "${{ env.APP_NAME }}" \
+              -icon=icon.png \
+              .
+
+            dir="fyne-cross/dist/windows-$arch"
+            if [[ ! -d "$dir" ]]; then
+              echo "ERROR: fyne-cross did not create the expected $arch output directory: $dir" >&2
+              echo "Available output files:" >&2
+              find fyne-cross -maxdepth 6 -type f -print 2>/dev/null | sort >&2 || true
+              exit 1
+            fi
+
+            zip_file=$(find "$dir" -type f -iname '*.zip' -print -quit)
+            if [[ -z "$zip_file" ]]; then
+              echo "ERROR: fyne-cross created $dir but did not produce a ZIP package" >&2
+              find "$dir" -maxdepth 5 -type f -print >&2 || true
+              exit 1
+            fi
+            echo "Verified Windows $arch package: $zip_file"
+          done
+
+          echo "--- fyne-cross output ---"
+          find fyne-cross/dist -maxdepth 5 -type f -print | sort
+
+      - name: Extract .exe files
+        run: |
+          set -euo pipefail
+
+          extract_windows_exe() {
+            local arch="$1"
+            local out="$2"
+            local dir="fyne-cross/dist/windows-$arch"
+            local zip_file tmp exe
+
+            if [[ ! -d "$dir" ]]; then
+              echo "ERROR: missing build output directory: $dir" >&2
+              exit 1
+            fi
+
+            zip_file=$(find "$dir" -type f -iname '*.zip' -print -quit)
+            if [[ -z "$zip_file" ]]; then
+              echo "ERROR: no ZIP package found for Windows $arch in $dir" >&2
+              find "$dir" -maxdepth 5 -type f -print >&2 || true
+              exit 1
+            fi
+
+            tmp=$(mktemp -d)
+            unzip -q "$zip_file" -d "$tmp"
+            exe=$(find "$tmp" -type f -iname '*.exe' -print -quit)
+            if [[ -z "$exe" ]]; then
+              echo "ERROR: no .exe file found inside $zip_file" >&2
+              find "$tmp" -maxdepth 5 -type f -print >&2 || true
+              exit 1
+            fi
+
+            cp "$exe" "$out"
+            echo "Extracted $out from $zip_file"
+          }
+
+          extract_windows_exe amd64 "${{ env.APP_NAME }}-windows-x64.exe"
+          extract_windows_exe 386 "${{ env.APP_NAME }}-windows-x86.exe"
+          ls -lh "${{ env.APP_NAME }}-windows-x64.exe" "${{ env.APP_NAME }}-windows-x86.exe"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-exe
+          if-no-files-found: error
+          path: |
+            ${{ env.APP_NAME }}-windows-x64.exe
+            ${{ env.APP_NAME }}-windows-x86.exe
+
+  # -------------------------------------------------------------------------
+  # Release: runs only when the Android, Linux and Windows builds all passed,
+  # and publishes the APK, the AppImage and both .exe files together.
+  # -------------------------------------------------------------------------
+  release:
+    name: Publish release
+    needs: [android, linux, windows]
+    if: ${{ success() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: release
+          merge-multiple: true
+
+      - name: List files
+        run: ls -lh release
+
+      - name: Pick the release tag
+        id: tag
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "name=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+            echo "pre=false" >> "$GITHUB_OUTPUT"
+          else
+            # manual run: publish a pre-release tagged with the run number
+            echo "name=build-${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+            echo "pre=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.tag.outputs.name }}
+          name: ${{ env.APP_NAME }} ${{ steps.tag.outputs.name }}
+          target_commitish: ${{ github.sha }}
+          prerelease: ${{ steps.tag.outputs.pre == 'true' }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            release/${{ env.APP_NAME }}-universal.apk
+            release/${{ env.APP_NAME }}-x86_64.AppImage
+            release/${{ env.APP_NAME }}-windows-x64.exe
+            release/${{ env.APP_NAME }}-windows-x86.exe

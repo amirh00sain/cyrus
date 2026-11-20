@@ -1,0 +1,10 @@
+country_code,country_name,host,ip_address,port
+EU,Europe,eu5.sec-tunnel.com,77.111.247.23,443
+EU,Europe,eu7.sec-tunnel.com,77.111.247.36,443
+EU,Europe,eu8.sec-tunnel.com,77.111.247.80,443
+EU,Europe,eu6.sec-tunnel.com,77.111.247.25,443
+AM,Americas,am0.sec-tunnel.com,77.111.246.21,443
+AM,Americas,am3.sec-tunnel.com,77.111.246.64,443
+AM,Americas,am2.sec-tunnel.com,77.111.246.63,443
+AM,Americas,am1.sec-tunnel.com,77.111.246.27,443
+AS,Asia,as4.sec-tunnel.com,77.111.245.14,443

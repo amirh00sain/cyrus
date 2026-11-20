@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=OperaVPN
+GenericName=VPN Client
+Comment=Cross-platform Opera VPN GUI client
+Exec=OperaVPN
+Icon=OperaVPN
+Categories=Network;Security;
+Terminal=false
+StartupNotify=true
